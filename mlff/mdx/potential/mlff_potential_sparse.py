@@ -229,9 +229,9 @@ class MLFFPotentialSparse(MachineLearningPotential):
 
             return x
 
-        def potential_fn(graph: Graph, has_aux: bool = False):
+        def potential_fn(graph: Graph, has_aux: bool = False, **kwargs):
             x = graph_to_mlff_input(graph)
-            y = obs_fn(params, **x)
+            y = obs_fn(params, **x, **kwargs)
             if has_aux:
                 return shift_fn(y['energy'], x['atomic_numbers']).reshape(-1).astype(dtype), jax.tree_map(lambda u: u.astype(dtype), y)
             else:
@@ -244,5 +244,5 @@ class MLFFPotentialSparse(MachineLearningPotential):
                    potential_fn=potential_fn,
                    dtype=dtype)
 
-    def __call__(self, graph: Graph, has_aux: bool = False) -> jnp.ndarray:
-        return self.potential_fn(graph, has_aux)
+    def __call__(self, graph: Graph, has_aux: bool = False, **kwargs) -> jnp.ndarray:
+        return self.potential_fn(graph, has_aux, **kwargs)

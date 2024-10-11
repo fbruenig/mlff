@@ -81,6 +81,27 @@ class StackNetSparse(nn.Module):
             o_dict = o_fn(quantities)
             observables.update(o_dict)
 
+        # #Add observables from module attributes
+        # if kwargs and 'observable_attributes' in kwargs:
+        #     obs_att = kwargs.get('observable_attributes')
+        #     for o_fn in self.observables:
+        #         m_name = getattr(o_fn,'module_name')
+        #         if m_name in obs_att:
+        #             for attr_name in obs_att[m_name]:
+        #                 xo_dict = getattr(o_fn,attr_name)(quantities)
+        #                 observables.update(xo_dict)
+
+        #Add observables from module attributes
+        if kwargs and 'observable_attributes' in kwargs:
+            obs_att = kwargs.get('observable_attributes')
+            for o_fn in self.observables:
+                m_name = getattr(o_fn,'module_name')
+                if m_name in obs_att:
+                    for k,v in o_fn.__dict__.items():
+                        if k in obs_att[m_name]:
+                            xo_dict = v(quantities)
+                            observables.update(xo_dict)
+                            
         # return jax.tree_map(lambda y: y[..., None], observables)
         return observables
 

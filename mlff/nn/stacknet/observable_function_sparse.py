@@ -44,6 +44,7 @@ def get_observable_fn_sparse(model: StackNetSparse, observable: str = None):
                 num_unpaired_electrons: jnp.ndarray = None,
                 idx_i_lr: jnp.ndarray = None,
                 idx_j_lr: jnp.ndarray = None,
+                **kwargs
         ):
             if batch_segments is None:
                 assert graph_mask is None
@@ -70,7 +71,7 @@ def get_observable_fn_sparse(model: StackNetSparse, observable: str = None):
                 idx_i_lr=idx_i_lr,
                 idx_j_lr=idx_j_lr,
             )
-            return model.apply(params, inputs)
+            return model.apply(params, inputs, **kwargs)
     else:
         def observable_fn(
                 params,
@@ -88,14 +89,15 @@ def get_observable_fn_sparse(model: StackNetSparse, observable: str = None):
                 total_charge: jnp.ndarray = None,
                 num_unpaired_electrons: jnp.ndarray = None,
                 idx_i_lr: jnp.ndarray = None,
-                idx_j_lr: jnp.ndarray = None
+                idx_j_lr: jnp.ndarray = None,
+                **kwargs
         ):
             if batch_segments is None:
                 assert graph_mask is None
                 assert node_mask is None
 
                 graph_mask = jnp.ones((1,)).astype(jnp.bool_)  # (1)
-                node_mask = jnp.ones((len(positions),)).astype(jnp.bool_)  # (num_nodes)
+                node_mask = jnp.ones((len(atomic_numbers),)).astype(jnp.bool_)  # (num_nodes)
                 batch_segments = jnp.zeros_like(atomic_numbers)  # (num_nodes)   
 
             inputs = dict(
@@ -115,7 +117,7 @@ def get_observable_fn_sparse(model: StackNetSparse, observable: str = None):
                 idx_i_lr=idx_i_lr,
                 idx_j_lr=idx_j_lr,
             )
-            return dict(observable=model.apply(params, inputs)[observable])
+            return dict(observable=model.apply(params, inputs, **kwargs)[observable])
 
     return observable_fn
 
