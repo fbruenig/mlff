@@ -5,7 +5,7 @@ import logging
 
 from collections import namedtuple
 from functools import partial, partialmethod
-from typing import Any
+from typing import Any, Dict
 
 from ase.calculators.calculator import Calculator
 
@@ -71,13 +71,14 @@ def matrix_to_voigt(matrix):
 
 
 class mlffCalculatorSparse(Calculator):
-    implemented_properties = ['energy', 'forces', 'stress', 'free_energy']
+    implemented_properties = ['energy', 'forces', 'stress', 'free_energy', 'charges']
 
     @classmethod
     def create_from_ckpt_dir(
             cls,
             ckpt_dir: str,
             calculate_stress: bool = False,
+            calculate_charges: bool = False,
             lr_neighbors_bool: bool = True,
             lr_cutoff: float = 10.,
             dispersion_energy_lr_cutoff_damping: float = 2.,
@@ -88,6 +89,7 @@ class mlffCalculatorSparse(Calculator):
             dtype: np.dtype = np.float64,
             model: str = 'so3krates',
             has_aux: bool = False,
+            obs_fn_kwargs: Dict[str, Dict[str, int]] = {},
             from_file: bool = False
     ):
 
@@ -106,13 +108,15 @@ class mlffCalculatorSparse(Calculator):
 
         return cls(potential=mlff_potential,
                    calculate_stress=calculate_stress,
+                   calculate_charges=calculate_charges,
                    capacity_multiplier=capacity_multiplier,
                    buffer_size_multiplier=buffer_size_multiplier,
                    skin=skin,
                    lr_neighbors_bool=lr_neighbors_bool,
                    lr_cutoff=lr_cutoff,
                    dtype=dtype,
-                   has_aux=has_aux
+                   has_aux=has_aux,
+                   obs_fn_kwargs=obs_fn_kwargs
                    )
 
     def __init__(
@@ -122,8 +126,10 @@ class mlffCalculatorSparse(Calculator):
             buffer_size_multiplier: float,
             skin: float,
             calculate_stress: bool,
+            calculate_charges: bool,
             dtype: np.dtype,
             has_aux: bool,
+            obs_fn_kwargs: Dict[str, Dict[str, int]],
             *args,
             **kwargs
     ):
@@ -132,13 +138,19 @@ class mlffCalculatorSparse(Calculator):
         """
 
         super(mlffCalculatorSparse, self).__init__(*args, **kwargs)
+        if calculate_charges:
+            has_aux = True
+            obs_fn_kwargs = dict(observable_attributes = dict( dipole_vec= dict(partial_charges=jnp.array([1]) )))
 
         if calculate_stress:
             def energy_fn(system, strain: jnp.ndarray, neighbors):
                 system = strain_system(system, strain)
                 graph = system_to_graph(system, neighbors, pme=False)
+                if obs_fn_kwargs:
+                    out = potential(graph,has_aux=[[True]],**obs_fn_kwargs)
+                else:
+                    out = potential(graph, has_aux=has_aux)
 
-                out = potential(graph, has_aux=has_aux)
                 if isinstance(out, tuple):
                     atomic_energy = out[0]
                     aux = out[1]
@@ -165,19 +177,28 @@ class mlffCalculatorSparse(Calculator):
                 volume = jnp.abs(jnp.dot(jnp.cross(system.cell[0], system.cell[1]), system.cell[2]))
                 stress = grads[1] / volume
                 stress = matrix_to_voigt(stress)
-
+                #out = jnp.array([0.0])
+                #print("energy: ", out.shape, type(out))
+                #print("forces: ", forces.shape, type(forces))
+                #print("stress: ", stress.shape, type(stress))
                 if isinstance(out, tuple):
                     if not has_aux:
                         raise ValueError
-
-                    return {'energy': out[0], 'forces': forces, 'stress': stress, 'aux': out[1]}
+                    print("in has_aux loop")
+                    if calculate_charges:
+                        return {'energy': out[0], 'forces': forces, 'stress': stress, 'charges': out[1]['partial_charges']}
+                    else:
+                        return {'energy': out[0], 'forces': forces, 'stress': stress, 'aux': out[1]}
                 else:
                     return {'energy': out, 'forces': forces, 'stress': stress}
 
         else:
             def energy_fn(system, neighbors):
                 graph = system_to_graph(system, neighbors, pme=False)
-                out = potential(graph, has_aux=has_aux)
+                if obs_fn_kwargs:
+                    out = potential(graph,has_aux=[[True]],**obs_fn_kwargs)
+                else:
+                    out = potential(graph, has_aux=has_aux)
                 if isinstance(out, tuple):
                     if not has_aux:
                         raise ValueError
