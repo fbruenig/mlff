@@ -217,6 +217,8 @@ class MLFFPotentialSparse(MachineLearningPotential):
                 'total_charge': graph.total_charge,
                 'num_unpaired_electrons': graph.num_unpaired_electrons,
                 'cell': getattr(graph, 'cell', None),
+                'k_grid': getattr(graph, 'k_grid', None),
+                'k_smearing': getattr(graph, 'k_smearing', None),
             }
             if long_range_bool is True:
                 x_lr = {

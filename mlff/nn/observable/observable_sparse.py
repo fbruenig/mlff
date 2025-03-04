@@ -16,6 +16,7 @@ from mlff.nn.observable.dispersion_ref_data import alphas, C6_coef
 from mlff.masking.mask import safe_scale
 from mlff.nn.activation_function.activation_function import softplus_inverse, softplus
 
+import jaxpme
 
 class EnergySparse(BaseSubModule):
     prop_keys: Dict
@@ -386,6 +387,63 @@ def vdw_QDO_disp_damp(
 
     return c * V3 * jnp.asarray(Hartree, dtype=input_dtype)
 
+@partial(jax.jit, static_argnames=('neighborlist_format',))
+def vdw_QDO_disp_damp_pme(
+        rij: jnp.ndarray,
+        idx_i: jnp.ndarray,
+        idx_j: jnp.ndarray,
+        positions: jnp.ndarray,
+        cell: jnp.ndarray,
+        k_grid: jnp.ndarray,
+        smearing: float,
+        gamma,
+        C6,
+        alpha_ij,
+        gamma_scale,
+        neighborlist_format: str = 'sparse'
+):
+    """ PME VDW interaction """
+    input_dtype = rij.dtype
+    print("DOING PME VDW")
+
+    # Determine the input dtype
+    input_dtype = rij.dtype
+
+    if neighborlist_format == 'sparse':
+        full_neighbor_list = True
+    elif neighborlist_format == 'ordered_sparse':
+        full_neighbor_list = False
+    else:
+        raise ValueError(
+            f"neighborlist_format must be one of either 'ordered_sparse' or 'sparse'. "
+            f"received {neighborlist_format=}"
+        )
+
+    # Cast constants to input dtype
+    _ke = jnp.asarray(ke, dtype=input_dtype)
+    _sigma = jnp.asarray(sigma, dtype=input_dtype)
+    #print(sigma)
+
+    calc = PME(prefactor=_ke,full_neighbor_list=full_neighbor_list,exponent=6)
+    ec6 =calc.energy(q, cell, positions, idx_i, idx_j, rij, k_grid, smearing)
+    calc = PME(prefactor=_ke,full_neighbor_list=full_neighbor_list,exponent=6)
+    ec8 = calc.energy(q, cell, positions, idx_i, idx_j, rij, k_grid, smearing)
+    calc = PME(prefactor=_ke,full_neighbor_list=full_neighbor_list,exponent=6)
+    ec10 = calc.energy(q, cell, positions, idx_i, idx_j, rij, k_grid, smearing)
+    return c * V3 * jnp.asarray(Hartree, dtype=input_dtype)
+
+    # C8 = 5 / gamma * C6
+    # C10 = 245 / 8 / gamma ** 2 * C6
+    # p = gamma_scale * 2 * 2.54 * alpha_ij ** (1 / 7)
+
+    # C8 = jnp.asarray(C8, dtype=input_dtype)
+    # C10 = jnp.asarray(C10, dtype=input_dtype)
+    # p = jnp.asarray(p, dtype=input_dtype)
+
+    # V3 = -C6 / (jnp.power(R, 6) + jnp.power(p, 6)) - C8 / (jnp.power(R, 8) + jnp.power(p, 8)) - C10 / (
+    #             jnp.power(R, 10) + jnp.power(p, 10))
+
+    # return c * V3 * jnp.asarray(Hartree, dtype=input_dtype)
 
 @jax.jit
 def mixing_rules(
@@ -458,6 +516,134 @@ def coulomb_erf(
 
     return pairwise
 
+
+def custom_coulomb(_sigma):
+    def lr_k2(smearing, k2):
+        return 4 * jnp.pi * jnp.exp(-0.5 * smearing**2 * k2) / k2
+
+    def lr_r(smearing, r):
+        return jax.scipy.special.erf(r / (smearing * jnp.sqrt(2.0))) / r
+
+    def sr_r(smearing, r):
+        return jax.lax.erf(r / _sigma) * ( 1.0/ r - lr_r(smearing, r) )
+
+    def correction_background(smearing):
+        return jnp.pi * smearing**2
+
+    def correction_self(smearing):
+        return jnp.sqrt(2.0 / jnp.pi) / smearing
+
+    return jaxpme.potentials.RawPotential(sr_r, lr_r, lr_k2, correction_background, correction_self)
+
+def PME(
+    exponent=1,
+    exclusion_radius=None,
+    prefactor=1.0,
+    interpolation_nodes=4,
+    custom_potential=None,
+    full_neighbor_list=False,
+):
+    pot = jaxpme.potentials.potential(
+        exponent=exponent,
+        exclusion_radius=exclusion_radius,
+        custom_potential=custom_potential,
+    )
+    solver = jaxpme.solvers.pme(
+        pot, interpolation_nodes=interpolation_nodes, full_neighbor_list=full_neighbor_list
+    )
+
+    def potentials_fn(
+        charges,
+        cell,
+        positions,
+        i,
+        j,
+        rij,
+        k_grid,
+        smearing,
+        atom_mask=None,
+    ):
+        reciprocal_cell = jaxpme.kspace.get_reciprocal(cell)
+
+        volume = jnp.abs(jnp.linalg.det(cell))
+        kvectors = jaxpme.kspace.generate_kvectors(
+            reciprocal_cell,
+            k_grid.shape,
+            dtype=positions.dtype,
+            for_ewald=False,
+        )
+
+        if atom_mask is not None:
+            charges *= atom_mask
+
+        rspace = solver.rspace(smearing, charges, rij, i, j)
+        kspace = solver.kspace(
+            smearing, charges, reciprocal_cell, k_grid, kvectors, positions, volume
+        )
+
+        potentials = rspace + kspace
+        #potentials = kspace
+
+        if atom_mask is not None:
+            potentials *= atom_mask
+
+        return prefactor * potentials
+
+    def atomic_energies(charges, cell, positions, *args, **kwargs):
+        potentials = potentials_fn(charges, cell, positions, *args, **kwargs)
+
+        if "atom_mask" in kwargs and kwargs["atom_mask"] is not None:
+            energies = jnp.where(kwargs["atom_mask"], charges * potentials, 0.0)
+        else:
+            energies = charges * potentials
+        return energies
+
+    def prepare_fn(atoms, charges, cutoff, mesh_spacing, smearing):
+        raise NotImplementedError("prepare_fn not implemented for custom PME function")
+
+    return jaxpme.calculators.Calculator(prepare_fn, potentials_fn, atomic_energies, None, None)
+
+
+@partial(jax.jit, static_argnames=('neighborlist_format',))
+def coulomb_pme_erf(
+        q: jnp.ndarray,
+        rij: jnp.ndarray,
+        idx_i: jnp.ndarray,
+        idx_j: jnp.ndarray,
+        positions: jnp.ndarray,
+        cell: jnp.ndarray,
+        k_grid: jnp.ndarray,
+        k_smearing: float,
+        ke: float,
+        sigma: float,
+        neighborlist_format: str = 'sparse'
+) -> jnp.ndarray:
+    """ PME Coulomb interaction with erf damping """
+    input_dtype = rij.dtype
+    print("DOING PME")
+
+    if neighborlist_format == 'sparse':
+        full_neighbor_list = True
+    elif neighborlist_format == 'ordered_sparse':
+        full_neighbor_list = False
+    else:
+        raise ValueError(
+            f"neighborlist_format must be one of either 'ordered_sparse' or 'sparse'. "
+            f"received {neighborlist_format=}"
+        )
+
+    # Cast constants to input dtype
+    _ke = jnp.asarray(ke, dtype=input_dtype)
+    _sigma = jnp.asarray(sigma, dtype=input_dtype)
+    #_k_smearing = jnp.asarray(k_smearing, dtype=input_dtype)
+    _k_smearing = k_smearing
+
+    calc = PME(prefactor=_ke,full_neighbor_list=full_neighbor_list,custom_potential=custom_coulomb(_sigma))
+
+    # Compute potential and compare against target value using default hypers
+    energies = calc.energy(q, cell, positions, idx_i, idx_j, rij, k_grid, _k_smearing)
+
+    return energies
 
 @partial(jax.jit, static_argnames=('neighborlist_format',))
 def coulomb_erf_shifted_force_smooth(
@@ -594,44 +780,66 @@ class ElectrostaticEnergySparse(BaseSubModule):
         idx_i_lr = inputs['idx_i_lr']
         idx_j_lr = inputs['idx_j_lr']
         d_ij_lr = inputs['d_ij_lr']
+        k_smearing = inputs['k_smearing']
 
         # Calculate partial charges
         partial_charges = self.partial_charges(inputs)['partial_charges']
 
         # If cutoff is set, we apply damping with error function with smoothing to zero at cutoff_lr.
         # We also apply force shifting to reduce discontinuity artifacts.
-        if self.cutoff_lr is not None:
-            # Calculate electrostatic energies per long-range edge
-            atomic_electrostatic_energy_ij = coulomb_erf_shifted_force_smooth(
-                partial_charges,
-                d_ij_lr,
-                idx_i_lr,
-                idx_j_lr,
-                ke=self.ke,
-                sigma=self.electrostatic_energy_scale,
-                cutoff=self.cutoff_lr,
-                cuton=self.cutoff_lr * 0.45,
-                neighborlist_format=self.neighborlist_format
-            )
+        if self.cutoff_lr is not None and k_smearing is None and False:
+                # Calculate electrostatic energies per long-range edge
+                atomic_electrostatic_energy_ij = coulomb_erf_shifted_force_smooth(
+                    partial_charges,
+                    d_ij_lr,
+                    idx_i_lr,
+                    idx_j_lr,
+                    ke=self.ke,
+                    sigma=self.electrostatic_energy_scale,
+                    cutoff=self.cutoff_lr,
+                    cuton=self.cutoff_lr * 0.45,
+                    neighborlist_format=self.neighborlist_format
+                )
+
+
         # If no cutoff is set, we just apply damping with error function and no explicit smoothing to zero.
         else:
             # Calculate electrostatic energies per long-range edge
-            atomic_electrostatic_energy_ij = coulomb_erf(
-                partial_charges,
-                d_ij_lr,
-                idx_i_lr,
-                idx_j_lr,
-                ke=self.ke,
-                sigma=self.electrostatic_energy_scale,
-                neighborlist_format=self.neighborlist_format
-            )
+            if k_smearing is None:
+                atomic_electrostatic_energy_ij = coulomb_erf(
+                    partial_charges,
+                    d_ij_lr,
+                    idx_i_lr,
+                    idx_j_lr,
+                    ke=self.ke,
+                    sigma=self.electrostatic_energy_scale,
+                    neighborlist_format=self.neighborlist_format
+                )
+            else:
+                k_grid = inputs['k_grid']
+                positions = inputs['positions']
+                cell = inputs['cell']
+                atomic_electrostatic_energy = coulomb_pme_erf(
+                    partial_charges,
+                    d_ij_lr,
+                    idx_i_lr,
+                    idx_j_lr,
+                    positions,
+                    cell,
+                    k_grid,
+                    k_smearing,
+                    ke=self.ke,
+                    sigma=self.electrostatic_energy_scale,
+                    neighborlist_format=self.neighborlist_format
+                )
 
-        # Calculate electrostatic atomic energies via summing over long-range neighbors
-        atomic_electrostatic_energy = segment_sum(
-            atomic_electrostatic_energy_ij,
-            segment_ids=idx_i_lr,
-            num_segments=num_nodes
-        )  # (num_nodes)
+        if k_smearing is None:
+            # Calculate electrostatic atomic energies via summing over long-range neighbors
+            atomic_electrostatic_energy = segment_sum(
+                atomic_electrostatic_energy_ij,
+                segment_ids=idx_i_lr,
+                num_segments=num_nodes
+            )  # (num_nodes)
 
         # Mask padded nodes
         atomic_electrostatic_energy = safe_scale(atomic_electrostatic_energy, node_mask)
@@ -659,6 +867,7 @@ class DispersionEnergySparse(nn.Module):
         idx_i_lr = inputs['idx_i_lr']
         idx_j_lr = inputs['idx_j_lr']
         d_ij_lr = inputs['d_ij_lr']
+        k_smearing = inputs['k_smearing']
 
         # Determine input dtype
         input_dtype = d_ij_lr.dtype
@@ -680,38 +889,49 @@ class DispersionEnergySparse(nn.Module):
         # Use cubic fit for gamma
         gamma_ij = gamma_cubic_fit(alpha_ij)
 
-        # Get dispersion energy, positions are converted to to a.u.
-        dispersion_energy_ij = vdw_QDO_disp_damp(
-            d_ij_lr / jnp.asarray(Bohr, dtype=input_dtype),
-            gamma_ij,
-            C6_ij,
-            alpha_ij,
-            jnp.asarray(self.dispersion_energy_scale, dtype=input_dtype),
-            self.neighborlist_format
-        )
-
-        # If long-range cutoff is given, one needs to damp dispersion smoothly to zero at cutoff_lr.
-        if self.cutoff_lr is not None:
-            if self.cutoff_lr_damping is None:
-                raise ValueError(
-                    f"cutoff_lr is but cutoff_lr_damping is not set. "
-                    f"received {self.cutoff_lr=} and {self.cutoff_lr_damping=}."
-                )
-
-            w = safe_mask(
-                d_ij_lr > 0,
-                partial(switching_fn, x_on=self.cutoff_lr - self.cutoff_lr_damping, x_off=self.cutoff_lr),
-                d_ij_lr,
-                0.
+        if self.cutoff_lr is not None and k_smearing is None or True:
+            # Get dispersion energy, positions are converted to to a.u.
+            dispersion_energy_ij = vdw_QDO_disp_damp(
+                d_ij_lr / jnp.asarray(Bohr, dtype=input_dtype),
+                gamma_ij,
+                C6_ij,
+                alpha_ij,
+                jnp.asarray(self.dispersion_energy_scale, dtype=input_dtype),
+                self.neighborlist_format
             )
 
-            dispersion_energy_ij = safe_scale(dispersion_energy_ij, w, 0.)
+            # If long-range cutoff is given, one needs to damp dispersion smoothly to zero at cutoff_lr.
+            if self.cutoff_lr is not None:
+                if self.cutoff_lr_damping is None:
+                    raise ValueError(
+                        f"cutoff_lr is but cutoff_lr_damping is not set. "
+                        f"received {self.cutoff_lr=} and {self.cutoff_lr_damping=}."
+                    )
 
-        atomic_dispersion_energy = segment_sum(
-            dispersion_energy_ij,
-            segment_ids=idx_i_lr,
-            num_segments=num_nodes
-        )  # (num_nodes)
+                w = safe_mask(
+                    d_ij_lr > 0,
+                    partial(switching_fn, x_on=self.cutoff_lr - self.cutoff_lr_damping, x_off=self.cutoff_lr),
+                    d_ij_lr,
+                    0.
+                )
+                dispersion_energy_ij = safe_scale(dispersion_energy_ij, w, 0.)
+
+            atomic_dispersion_energy = segment_sum(
+                dispersion_energy_ij,
+                segment_ids=idx_i_lr,
+                num_segments=num_nodes
+            )  # (num_nodes)
+
+        else:
+            # Get dispersion energy, positions are converted to to a.u.
+            atomic_dispersion_energy = vdw_QDO_disp_damp_pme(
+                d_ij_lr / jnp.asarray(Bohr, dtype=input_dtype),
+                gamma_ij,
+                C6_ij,
+                alpha_ij,
+                jnp.asarray(self.dispersion_energy_scale, dtype=input_dtype),
+                self.neighborlist_format
+            )
 
         atomic_dispersion_energy = safe_scale(atomic_dispersion_energy, node_mask)
 
