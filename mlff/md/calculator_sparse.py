@@ -88,7 +88,9 @@ class mlffCalculatorSparse(Calculator):
             dtype: np.dtype = np.float64,
             model: str = 'so3krates',
             has_aux: bool = False,
-            from_file: bool = False
+            obs_fn_kwargs: Dict[str, Dict[str, int]] = {},
+            from_file: bool = False,
+            **kwargs
     ):
 
         mlff_potential = MLFFPotentialSparse.create_from_ckpt_dir(
@@ -98,6 +100,7 @@ class mlffCalculatorSparse(Calculator):
                 cutoff_lr=lr_cutoff,
                 dispersion_energy_cutoff_lr_damping=dispersion_energy_lr_cutoff_damping,
                 neighborlist_format_lr='sparse',  # ASECalculator has sparse format.
+                **kwargs
             ),
             dtype=dtype,
             model=model,
@@ -136,9 +139,12 @@ class mlffCalculatorSparse(Calculator):
         if calculate_stress:
             def energy_fn(system, strain: jnp.ndarray, neighbors):
                 system = strain_system(system, strain)
-                graph = system_to_graph(system, neighbors, pme=False)
+                graph = system_to_graph(system, neighbors)
+                if obs_fn_kwargs:
+                    out = potential(graph,has_aux=[[True]],**obs_fn_kwargs)
+                else:
+                    out = potential(graph, has_aux=has_aux)
 
-                out = potential(graph, has_aux=has_aux)
                 if isinstance(out, tuple):
                     atomic_energy = out[0]
                     aux = out[1]
@@ -158,7 +164,7 @@ class mlffCalculatorSparse(Calculator):
                 )(
                     system,
                     strain,
-                    neighbors
+                    neighbors,
                 )
 
                 forces = - grads[0].R
@@ -197,7 +203,7 @@ class mlffCalculatorSparse(Calculator):
                     has_aux=has_aux
                 )(
                     system,
-                    neighbors
+                    neighbors,
                 )
                 forces = - grads.R
 
