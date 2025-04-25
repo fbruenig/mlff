@@ -81,7 +81,7 @@ class mlffCalculatorSparse(Calculator):
             calculate_charges: bool = False,
             lr_neighbors_bool: bool = True,
             lr_cutoff: float = 10.,
-            dispersion_energy_lr_cutoff_damping: float = 2.,
+            dispersion_energy_cutoff_lr_damping: float = 2.,
             capacity_multiplier: float = 1.25,
             buffer_size_multiplier: float = 1.25,
             skin: float = 0.,
@@ -98,7 +98,7 @@ class mlffCalculatorSparse(Calculator):
             add_shift=add_energy_shift,
             long_range_kwargs=dict(
                 cutoff_lr=lr_cutoff,
-                dispersion_energy_cutoff_lr_damping=dispersion_energy_lr_cutoff_damping,
+                dispersion_energy_cutoff_lr_damping=dispersion_energy_cutoff_lr_damping,
                 neighborlist_format_lr='sparse',  # ASECalculator has sparse format.
             ),
             dtype=dtype,
