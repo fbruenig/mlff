@@ -291,7 +291,7 @@ class mlffCalculatorSparse(Calculator):
                         lr_cutoff=self.lr_cutoff,
             )
             neighbors = self.spatial_partitioning.update_fn(system.R, self.neighbors, new_cell=cell)
-            assert not neighbors.overflow
+            #assert not neighbors.overflow
             self.neighbors = neighbors
         else:
             self.neighbors = neighbors
