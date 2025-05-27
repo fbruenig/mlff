@@ -56,6 +56,8 @@ def init_so3krates_sparse(
         neighborlist_format_lr: str = 'sparse',  # or 'ordered_sparse'
         output_intermediate_quantities: Optional[Sequence[str]] = None,
 ):
+    print("WARNING: this is the PME test branch of SO3LR with hard coded parameters. DO NOT USE IN PRODUCTION!")
+
     embedding_modules = make_embedding_modules(
         num_features=num_features,
         use_spin_embed=use_spin_embed,
