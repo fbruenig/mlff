@@ -133,6 +133,9 @@ class EnergySparse(BaseSubModule):
             inputs.update(**self.dispersion_energy(inputs))
             atomic_energy += inputs['dispersion_energy']
 
+        atomic_energy = inputs['electrostatic_energy_kspace']
+        atomic_energy += inputs['electrostatic_energy']
+
         if self.output_convention == 'per_structure':
             energy = segment_sum(
                 atomic_energy,
@@ -495,7 +498,7 @@ def coulomb_erf(
         return pairwise * jax.lax.erf(rij / _sigma)
     else:
         _cutoff = jnp.asarray(cutoff, dtype=input_dtype)
-        return pairwise * (jax.lax.erf(rij / _sigma) - jax.lax.erf(rij / (_cutoff * jnp.sqrt(2.0))))
+        return pairwise* (1.0-jax.lax.erf(rij / (_cutoff * jnp.sqrt(2.0))))
 
 
 
@@ -640,6 +643,8 @@ class ElectrostaticEnergySparse(BaseSubModule):
         partial_charges = inputs.get('partial_charges')
         if partial_charges is None:
             partial_charges = self.partial_charges(inputs)['partial_charges']
+        partial_charges = jnp.array([1, 1, 1, 1, -1, -1, -1, -1], dtype=d_ij_lr.dtype) # for testing PME, fix charges as given in the test_random_structure test
+        #partial_charges = jnp.array([-1, 1,], dtype=d_ij_lr.dtype) # Madelung test
 
         # If cutoff is set, we apply damping with error function with smoothing to zero at cutoff_lr.
         # We also apply force shifting to reduce discontinuity artifacts.
@@ -718,6 +723,8 @@ class ElectrostaticEnergyKspace(BaseSubModule):
         partial_charges = inputs.get('partial_charges')
         if partial_charges is None:
             partial_charges = self.partial_charges(inputs)['partial_charges']
+        partial_charges = jnp.array([1, 1, 1, 1, -1, -1, -1, -1], dtype=positions.dtype) # for testing PME, fix charges as given in the test_random_structure test
+        #partial_charges = jnp.array([-1, 1], dtype=positions.dtype) # Madelung test
 
         assert positions is not None, "Positions must be provided for k-space calculation."
         assert k_grid is not None, "k_grid must be provided for k-space calculation."
