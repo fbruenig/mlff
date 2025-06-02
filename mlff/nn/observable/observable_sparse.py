@@ -643,7 +643,8 @@ class ElectrostaticEnergySparse(BaseSubModule):
 
         # If cutoff is set, we apply damping with error function with smoothing to zero at cutoff_lr.
         # We also apply force shifting to reduce discontinuity artifacts.
-        if self.cutoff_lr is not None and k_smearing is None:
+        #if self.cutoff_lr is not None and k_smearing is None:
+        if False:
                 # Calculate electrostatic energies per long-range edge
                 atomic_electrostatic_energy_ij = coulomb_erf_shifted_force_smooth(
                     partial_charges,
@@ -668,7 +669,8 @@ class ElectrostaticEnergySparse(BaseSubModule):
                 idx_j_lr,
                 ke=self.ke,
                 sigma=self.electrostatic_energy_scale,
-                cutoff=k_smearing,
+                #cutoff=k_smearing,
+                cutoff=None,
                 neighborlist_format=self.neighborlist_format
             )            
 
