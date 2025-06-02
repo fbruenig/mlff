@@ -9,7 +9,7 @@ from mlff.nn.stacknet.observable_function_sparse import get_energy_and_force_fn_
 from ml_collections import config_dict
 import numpy as np
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, Optional
 import yaml
 import logging
 import os
@@ -25,7 +25,8 @@ logging.mlff = partial(logging.log, logging.MLFF)
 
 def make_so3krates_sparse_from_config(
         config: config_dict.ConfigDict = None,
-        return_representations_bool: bool = False
+        return_representations_bool: bool = False,
+        output_intermediate_quantities: Optional[Sequence[str]] = None
 ):
     """Make a SO3krates model from a config.
 
@@ -74,7 +75,7 @@ def make_so3krates_sparse_from_config(
         return_representations_bool=return_representations_bool,
         zbl_repulsion_bool=model_config.zbl_repulsion_bool,
         neighborlist_format_lr=config.neighborlist_format_lr,
-        output_intermediate_quantities=config.output_intermediate_quantities,
+        output_intermediate_quantities=output_intermediate_quantities,
     )
 
 
