@@ -491,8 +491,15 @@ def coulomb_erf(
     _sigma = jnp.asarray(sigma, dtype=input_dtype)
 
     pairwise = c * _ke * q[idx_i] * q[idx_j] / rij
-    if cutoff is None:
-        return pairwise * jax.lax.erf(rij / _sigma)
+    #if cutoff is None:
+    if True:
+        #return pairwise * jax.lax.erf(rij / _sigma)
+        _cutoff = jnp.asarray(cutoff, dtype=input_dtype)
+        return jnp.where(
+            rij < _cutoff,
+            pairwise * jax.lax.erf(rij / _sigma),
+            0.0
+            )
     else:
         _cutoff = jnp.asarray(cutoff, dtype=input_dtype)
         return pairwise * (jax.lax.erf(rij / _sigma) - jax.lax.erf(rij / (_cutoff * jnp.sqrt(2.0))))
@@ -670,7 +677,7 @@ class ElectrostaticEnergySparse(BaseSubModule):
                 ke=self.ke,
                 sigma=self.electrostatic_energy_scale,
                 #cutoff=k_smearing,
-                cutoff=None,
+                cutoff=self.cutoff_lr,
                 neighborlist_format=self.neighborlist_format
             )            
 
