@@ -490,14 +490,14 @@ def coulomb_erf(
     _ke = jnp.asarray(ke, dtype=input_dtype)
     _sigma = jnp.asarray(sigma, dtype=input_dtype)
 
-    pairwise = c * _ke * q[idx_i] * q[idx_j] / rij
+    pairwise = c * _ke * q[idx_i] * q[idx_j]
     #if cutoff is None:
     if True:
         #return pairwise * jax.lax.erf(rij / _sigma)
         _cutoff = jnp.asarray(cutoff, dtype=input_dtype)
         return jnp.where(
             rij < _cutoff,
-            pairwise * jax.lax.erf(rij / _sigma),
+            pairwise * (jax.lax.erf(rij / _sigma) / rij - jax.lax.erf(_cutoff / _sigma) / _cutoff),
             0.0
             )
     else:
