@@ -113,6 +113,7 @@ class EnergySparse(BaseSubModule):
         atomic_energy += energy_offset  # (num_nodes)
 
         atomic_energy = safe_scale(atomic_energy, node_mask)
+        inputs.update({'nn_energy': atomic_energy})
 
         if self.zbl_repulsion_bool:
             inputs.update(**self.zbl_repulsion(inputs))
