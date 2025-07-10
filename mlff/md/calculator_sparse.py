@@ -188,26 +188,35 @@ class mlffCalculatorSparse(Calculator):
 
             if calculate_hessian:
 
-                def energy_fn(system, neighbors):
-                    graph = system_to_graph(system, neighbors)
+                def energy_fn(R, system, neighbors):
+                    local_system = System(R, system.Z, system.cell, system.total_charge, system.num_unpaired_electrons, system.k_grid, system.k_smearing)
+                    graph = system_to_graph(local_system, neighbors)
                     out = potential(graph, has_aux=has_aux)
                     if isinstance(out, tuple):
                         if not has_aux:
                             raise ValueError
 
+                        atomic_energy = out[0]
+                        aux = out[1]
+                        return atomic_energy.sum(), aux
+                    else:
+                        atomic_energy = out
+                        return atomic_energy.sum()
+
                 @jax.jit
                 def calculate_fn(system, neighbors):
+                    penergy_fn = partial(energy_fn, system=system, neighbors=neighbors)
+
                     out, grads = jax.value_and_grad(
-                        energy_fn,
+                        penergy_fn,
                         allow_int=True,
                         has_aux=has_aux
                     )(
-                        system,
-                        neighbors
+                        system.R
                     )
-                    forces = - grads.R
+                    forces = - grads
 
-                    hessian = jax.hessian(energy_fn, allow_int=True, has_aux=has_aux)(system, neighbors)
+                    hessian = jax.hessian(penergy_fn, has_aux=has_aux)(system.R)
 
                     if isinstance(out, tuple):
                         if not has_aux:
