@@ -117,7 +117,7 @@ class mlffCalculatorSparse(Calculator):
                    lr_cutoff=lr_cutoff,
                    dtype=dtype,
                    has_aux=has_aux,
-                   obs_fn_kwargs=obs_fn_kwargs
+                   observables=output_intermediate_quantities,
                    )
 
     def __init__(
@@ -130,7 +130,7 @@ class mlffCalculatorSparse(Calculator):
             calculate_charges: bool,
             dtype: np.dtype,
             has_aux: bool,
-            obs_fn_kwargs: Dict[str, Dict[str, int]],
+            observables: Optional[Sequence[str]] = None,
             *args,
             **kwargs
     ):
@@ -141,14 +141,18 @@ class mlffCalculatorSparse(Calculator):
         super(mlffCalculatorSparse, self).__init__(*args, **kwargs)
         if calculate_charges:
             has_aux = True
-            obs_fn_kwargs = dict(observable_attributes = dict( dipole_vec= dict(partial_charges=jnp.array([1]) )))
+            if output_intermediate_quantities is None:
+                output_intermediate_quantities = ['partial_charges']
+            else:
+                if 'partial_charges' not in output_intermediate_quantities:
+                    output_intermediate_quantities.append('partial_charges')
 
         if calculate_stress:
             def energy_fn(system, strain: jnp.ndarray, neighbors):
                 system = strain_system(system, strain)
                 graph = system_to_graph(system, neighbors, pme=False)
-                if obs_fn_kwargs:
-                    out = potential(graph,has_aux=[[True]],**obs_fn_kwargs)
+                if observables is not None:
+                    out = potential(graph,has_aux=[[True]])
                 else:
                     out = potential(graph, has_aux=has_aux)
 
@@ -178,10 +182,7 @@ class mlffCalculatorSparse(Calculator):
                 volume = jnp.abs(jnp.dot(jnp.cross(system.cell[0], system.cell[1]), system.cell[2]))
                 stress = grads[1] / volume
                 stress = matrix_to_voigt(stress)
-                #out = jnp.array([0.0])
-                #print("energy: ", out.shape, type(out))
-                #print("forces: ", forces.shape, type(forces))
-                #print("stress: ", stress.shape, type(stress))
+
                 if isinstance(out, tuple):
                     if not has_aux:
                         raise ValueError
@@ -196,8 +197,8 @@ class mlffCalculatorSparse(Calculator):
         else:
             def energy_fn(system, neighbors):
                 graph = system_to_graph(system, neighbors, pme=False)
-                if obs_fn_kwargs:
-                    out = potential(graph,has_aux=[[True]],**obs_fn_kwargs)
+                if observables is not None:
+                    out = potential(graph,has_aux=[[True]])
                 else:
                     out = potential(graph, has_aux=has_aux)
                 if isinstance(out, tuple):
